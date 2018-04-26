@@ -97,26 +97,10 @@ void addStIndexedTreeInfoR(stTree *tree)
     }
 }
 
-int64_t stTree_getNumLeaves(stTree *tree) {
-    int64_t numLeaves = 0;
-    stList *stack = stList_construct();
-    stList_append(stack, tree);
-    while (stList_length(stack) != 0) {
-        tree = stList_pop(stack);
-        for (int64_t i = 0; i < stTree_getChildNumber(tree); i++) {
-            stList_append(stack, stTree_getChild(tree, i));
-        }
-        if (stTree_getChildNumber(tree) == 0) {
-            numLeaves++;
-        }
-    }
-    stList_destruct(stack);
-    return numLeaves;
-}
-
 void stPhylogeny_addStIndexedTreeInfo(stTree *tree) {
     addStIndexedTreeInfoR(tree);
-    stPhylogeny_setLeavesBelow(tree, stTree_getNumLeaves(tree));
+    // FIXME: assumes binary tree
+    stPhylogeny_setLeavesBelow(tree, (stTree_getNumNodes(tree)+1)/2);
 }
 
 
@@ -813,8 +797,13 @@ int64_t **stPhylogeny_getMRCAMatrix(stTree *speciesTree, stHash *speciesToIndex)
     return ret;
 }
 
-stTree *stPhylogeny_guidedNeighborJoining(stMatrix *distanceMatrix,
-                                          stMatrix *similarityMatrix,
+// Neighbor joining guided by a species tree. Note that the matrix is
+// a similarity matrix (i > j is # differences between i and j, i < j
+// is # similarities between i and j) rather than a distance
+// matrix. Join costs should be precomputed by
+// stPhylogeny_computeJoinCosts. indexToSpecies is a map from matrix
+// index (of the similarity matrix) to species leaves.
+stTree *stPhylogeny_guidedNeighborJoining(stMatrix *similarityMatrix,
                                           stMatrix *joinCosts,
                                           stHash *matrixIndexToJoinCostIndex,
                                           stHash *speciesToJoinCostIndex,
@@ -839,8 +828,7 @@ stTree *stPhylogeny_guidedNeighborJoining(stMatrix *distanceMatrix,
     }
     stHash_destructIterator(hashIt);
 
-    // Distance matrix. We clone the one fed to us since we need to
-    // modify it during the process. Note: only valid for i < j.
+    // Distance matrix. Note: only valid for i < j.
     double **distances = st_calloc(numLeaves, sizeof(double *));
     for (int64_t i = 0; i < numLeaves; i++) {
         distances[i] = st_calloc(numLeaves, sizeof(double));
@@ -853,10 +841,14 @@ stTree *stPhylogeny_guidedNeighborJoining(stMatrix *distanceMatrix,
         confidences[i] = st_calloc(numLeaves, sizeof(double));
     }
 
-    // Fill in our copy of the distance matrix.
+    // Initial distance matrix calculation using the similarities and join costs.
     for (int64_t i = 0; i < numLeaves; i++) {
         for (int64_t j = i + 1; j < numLeaves; j++) {
-            distances[i][j] = *stMatrix_getCell(distanceMatrix, i, j);
+            double similarities = *stMatrix_getCell(similarityMatrix, i, j);
+            double differences = *stMatrix_getCell(similarityMatrix, j, i);
+            double count = similarities + differences;
+            confidences[i][j] = count;
+            distances[i][j] = (count != 0.0) ? differences / count : INT64_MAX;
         }
     }
 
@@ -1095,6 +1087,8 @@ static void fillInReconciliationInfo(stTree *gene, stTree *recon,
 static stTree *stPhylogeny_reconcileAtMostBinary_R(stTree *gene,
                                                    stHash *leafToSpecies,
                                                    bool relabelAncestors) {
+    assert(stTree_getChildNumber(gene) == 0 ||
+           stTree_getChildNumber(gene) == 2);
     stTree *recon;
     stReconciliationEvent event;
     if (stTree_getChildNumber(gene) == 0) {
@@ -1103,20 +1097,15 @@ static stTree *stPhylogeny_reconcileAtMostBinary_R(stTree *gene,
         assert(recon != NULL);
         event = LEAF;
     } else {
-        event = SPECIATION;
-        recon = stPhylogeny_reconcileAtMostBinary_R(
+        stTree *leftRecon = stPhylogeny_reconcileAtMostBinary_R(
             stTree_getChild(gene, 0), leafToSpecies, relabelAncestors);
-        for (int64_t i = 1; i < stTree_getChildNumber(gene); i++) {
-            stTree *childRecon = stPhylogeny_reconcileAtMostBinary_R(
-                stTree_getChild(gene, i), leafToSpecies, relabelAncestors);
-            recon = stTree_getMRCA(childRecon, recon);
-        }
-        for (int64_t i = 0; i < stTree_getChildNumber(gene); i++) {
-            stPhylogenyInfo *childInfo = stTree_getClientData(stTree_getChild(gene, i));
-            stTree *childRecon = childInfo->recon->species;
-            if (childRecon == recon) {
-                event = DUPLICATION;
-            }
+        stTree *rightRecon = stPhylogeny_reconcileAtMostBinary_R(
+            stTree_getChild(gene, 1), leafToSpecies, relabelAncestors);
+        recon = stTree_getMRCA(leftRecon, rightRecon);
+        if (recon == leftRecon || recon == rightRecon) {
+            event = DUPLICATION;
+        } else {
+            event = SPECIATION;
         }
     }
     fillInReconciliationInfo(gene, recon, event, relabelAncestors);
@@ -1137,209 +1126,6 @@ void stPhylogeny_reconcileAtMostBinary(stTree *geneTree, stHash *leafToSpecies,
                                         relabelAncestors);
 }
 
-static bool getLinkedSpeciesTree_R(stTree *speciesNode, stTree *polytomy, stHash *speciesToNumGenes, stTree *linkedNode) {
-    bool hasGene = false;
-    for (int64_t i = 0; i < stTree_getChildNumber(polytomy); i++) {
-        stTree *child = stTree_getChild(polytomy, i);
-        stPhylogenyInfo *childInfo = stTree_getClientData(child);
-        stReconciliationInfo *childRecon = childInfo->recon;
-        stTree *childSpecies = childRecon->species;
-        if (childSpecies == speciesNode) {
-            hasGene = true;
-            int64_t *numGenes = stHash_search(speciesToNumGenes, linkedNode);
-            if (numGenes == NULL) {
-                numGenes = calloc(1, sizeof(int64_t));
-                stHash_insert(speciesToNumGenes, linkedNode, numGenes);
-            }
-            (*numGenes)++;
-        }
-    }
-    if (stTree_getChildNumber(speciesNode) == 0 && !hasGene) {
-        return false;
-    }
-    bool descendantHasGene = false;
-    for (int64_t i = 0; i < stTree_getChildNumber(speciesNode); i++) {
-        if (getLinkedSpeciesTree_R(stTree_getChild(speciesNode, i), polytomy,
-                                   speciesToNumGenes, stTree_getChild(linkedNode, i))) {
-            descendantHasGene = true;
-        }
-    }
-
-    if (!descendantHasGene) {
-        // have to be careful to always destruct the 0th child here:
-        // we can't iterate the list of children while destroying the
-        // children.
-        int64_t numChildren = stTree_getChildNumber(linkedNode);
-        for (int64_t i = 0; i < numChildren; i++) {
-            stTree *linkedChild = stTree_getChild(linkedNode, 0);
-            stTree_setParent(linkedChild, NULL);
-            stTree_destruct(linkedChild);
-        }
-    }
-    return descendantHasGene || hasGene;
-}
-
-// Get the "linked species tree" for a polytomy: i.e. the part of the
-// species tree corresponding to the polytomy.
-stTree *getLinkedSpeciesTree(stTree *speciesTree, stTree *polytomy, stHash **speciesToNumGenes) {
-    *speciesToNumGenes = stHash_construct2(NULL, free);
-    stTree *linkedTree = stTree_clone(speciesTree);
-    getLinkedSpeciesTree_R(speciesTree, polytomy, *speciesToNumGenes, linkedTree);
-    return linkedTree;
-}
-
-// Calculate the minimum cost for an x-partial resolution of a
-// polytomy.
-static int64_t minCost(stTree *species, int64_t x, stHash *cupValues) {
-    stIntTuple *cupParameters = stHash_search(cupValues, species);
-    assert(cupParameters != NULL);
-    int64_t m1 = stIntTuple_get(cupParameters, 0);
-    int64_t m2 = stIntTuple_get(cupParameters, 1);
-    int64_t gamma = stIntTuple_get(cupParameters, 2);
-
-    if (x < m1) {
-        return gamma + m1 - x;
-    } else if (x >= m1 && x <= m2) {
-        return gamma;
-    } else {
-        assert (x > m2);
-        return gamma + x - m2;
-    }
-}
-
-static void getCupValues_R(stTree *species, stHash *speciesToNumGenes, stHash *cupValues) {
-    for (int64_t i = 0; i < stTree_getChildNumber(species); i++) {
-        getCupValues_R(stTree_getChild(species, i), speciesToNumGenes, cupValues);
-    }
-
-    int64_t *numGenesPtr = stHash_search(speciesToNumGenes, species);
-    int64_t numGenes = numGenesPtr ? *numGenesPtr : 0;
-    int64_t m1, m2, gamma;
-    if (stTree_getChildNumber(species) == 0) {
-        if (numGenes == 0) {
-            m1 = 1;
-            m2 = 1;
-            gamma = 1;
-        } else {
-            m1 = numGenes;
-            m2 = numGenes;
-            gamma = 0;
-        }
-    } else {
-        assert(stTree_getChildNumber(species) == 2);
-        stTree *child1 = stTree_getChild(species, 0);
-        stTree *child2 = stTree_getChild(species, 1);
-        stIntTuple *child1Tuple = stHash_search(cupValues, child1);
-        stIntTuple *child2Tuple = stHash_search(cupValues, child2);
-        int64_t child1m1 = stIntTuple_get(child1Tuple, 0);
-        int64_t child1m2 = stIntTuple_get(child1Tuple, 1);
-        int64_t child1gamma = stIntTuple_get(child1Tuple, 2);
-        int64_t child2m1 = stIntTuple_get(child2Tuple, 0);
-        int64_t child2m2 = stIntTuple_get(child2Tuple, 1);
-        int64_t child2gamma = stIntTuple_get(child2Tuple, 2);
-
-        if (child1m1 < child2m1 && child1m2 < child2m1) {
-            m1 = child1m2;
-            m2 = child2m1;
-            gamma = child1gamma + child2gamma + child2m1 - child1m2;
-        } else if (child1m1 < child2m1 && child1m2 >= child2m1 && child1m2 <= child2m2) {
-            m1 = child2m1;
-            m2 = child1m2;
-            gamma = child1gamma + child2gamma;
-        } else if (child1m1 < child2m1 && child1m2 > child2m2) {
-            m1 = child2m1;
-            m2 = child2m2;
-            gamma = child1gamma + child2gamma;
-        } else if (child2m1 <= child1m1 && child1m1 <= child2m2 && child2m1 <= child1m2 && child1m2 <= child2m2) {
-            // The first part of this if condition is duplicated in
-            // the paper, but it is clear that they mean the case
-            // where child1's breakpoints are totally enclosed within
-            // child2's breakpoints.
-            m1 = child1m1;
-            m2 = child1m2;
-            gamma = child1gamma + child2gamma;
-        } else if (child2m1 <= child1m1 && child1m1 <= child2m2 && child1m2 > child2m2) {
-            m1 = child1m2;
-            m2 = child2m2;
-            gamma = child1gamma + child2gamma;
-        } else {
-            m1 = child2m2;
-            m2 = child1m1;
-            gamma = child1gamma + child2gamma + child1m1 - child2m2;
-        }
-
-        m1 = m1 + numGenes;
-        m2 = m2 + numGenes;
-        if (m1 <= numGenes) {
-            m1 = numGenes + 1;
-        }
-        if (m2 <= numGenes) {
-            m2 = numGenes + 1;
-            gamma = minCost(child1, 1, cupValues) + minCost(child2, 1, cupValues);
-        }
-    }
-    stHash_insert(cupValues, species, stIntTuple_construct3(m1, m2, gamma));
-}
-
-// Get the "cup values" (i.e. parameters for the minCost function) for
-// a polytomy.
-static stHash *getCupValues(stTree *speciesTree, stHash *speciesToNumGenes) {
-    stHash *cupValues = stHash_construct2(NULL, (void (*)(void *)) stIntTuple_destruct);
-    getCupValues_R(speciesTree, speciesToNumGenes, cupValues);
-    return cupValues;
-}
-
-// Get the number of duplications and losses in a minimum-cost
-// resolution of a polytomy at each node in the species tree.
-static void dupLoss(stTree *species, int64_t k, stHash *speciesToNumGenes, stHash *cupValues, stHash *dups, stHash *losses) {
-    int64_t *numGenesPtr = stHash_search(speciesToNumGenes, species);
-    int64_t numGenes = numGenesPtr ? *numGenesPtr : 0;
-
-    stIntTuple *cupParameters = stHash_search(cupValues, species);
-    assert(cupParameters != NULL);
-    int64_t m1 = stIntTuple_get(cupParameters, 0);
-    int64_t m2 = stIntTuple_get(cupParameters, 1);
-
-    stTree *child1 = stTree_getChildNumber(species) > 0 ? stTree_getChild(species, 0) : NULL;
-    stTree *child2 = stTree_getChildNumber(species) > 1 ? stTree_getChild(species, 1) : NULL;
-
-    int64_t *numDups = stHash_search(dups, species);
-    if (numDups == NULL) {
-        numDups = st_calloc(1, sizeof(int64_t));
-        stHash_insert(dups, species, numDups);
-    }
-    int64_t *numLosses = stHash_search(losses, species);
-    if (numLosses == NULL) {
-        numLosses = st_calloc(1, sizeof(int64_t));
-        stHash_insert(losses, species, numLosses);
-    }
-
-    if (stTree_getChildNumber(species) == 0) {
-        if (k >= numGenes) {
-            *numDups = 0;
-            *numLosses = k - numGenes;
-        } else {
-            *numDups = numGenes - k;
-            *numLosses = 0;
-        }
-    } else if (k - numGenes > 0 && minCost(species, k, cupValues) == minCost(child1, k - numGenes, cupValues) + minCost(child2, k - numGenes, cupValues)) {
-        *numDups = 0;
-        *numLosses = 0;
-        dupLoss(child1, k - numGenes, speciesToNumGenes, cupValues, dups, losses);
-        dupLoss(child2, k - numGenes, speciesToNumGenes, cupValues, dups, losses);
-    } else if (k < m1) {
-        *numDups = m1 - k;
-        *numLosses = 0;
-        dupLoss(child1, m1 - numGenes, speciesToNumGenes, cupValues, dups, losses);
-        dupLoss(child2, m1 - numGenes, speciesToNumGenes, cupValues, dups, losses);
-    } else if (k > m2) {
-        *numDups = 0;
-        *numLosses = k - m2;
-        dupLoss(child1, m2 - numGenes, speciesToNumGenes, cupValues, dups, losses);
-        dupLoss(child2, m2 - numGenes, speciesToNumGenes, cupValues, dups, losses);
-    }
-}
-
 // For a tree that has already been reconciled by
 // reconcileAtMostBinary, calculates the number of dups and losses
 // implied by the reconciliation. dups and losses must be set to 0
@@ -1347,22 +1133,24 @@ static void dupLoss(stTree *species, int64_t k, stHash *speciesToNumGenes, stHas
 void stPhylogeny_reconciliationCostAtMostBinary(stTree *reconciledTree,
                                                 int64_t *dups,
                                                 int64_t *losses) {
+    assert(stTree_getChildNumber(reconciledTree) == 0
+           || stTree_getChildNumber(reconciledTree) == 2);
     stPhylogenyInfo *info = stTree_getClientData(reconciledTree);
     assert(info != NULL);
     stReconciliationInfo *recon = info->recon;
     assert(recon != NULL);
     stTree *species = recon->species;
-    if (stTree_getChildNumber(reconciledTree) == 2) {
-        if (recon->event == DUPLICATION) {
-            (*dups)++;
-        }
-        // Count losses.
-        // Look at all this node's children. If the children's recons
-        // aren't direct children of this node's recon, then count N
-        // losses, where N is the number of nodes "skipped" on the way to
-        // this node's recon (plus one if this is a dup and the children's
-        // recons are not equal). Nodes that have only one child should
-        // not count as "skipped".
+    if (recon->event == DUPLICATION) {
+        (*dups)++;
+    }
+    // Count losses.
+    // Look at all this node's children. If the children's recons
+    // aren't direct children of this node's recon, then count N
+    // losses, where N is the number of nodes "skipped" on the way to
+    // this node's recon (plus one if this is a dup and the children's
+    // recons are not equal). Nodes that have only one child should
+    // not count as "skipped".
+    if (stTree_getChildNumber(reconciledTree) != 0) {
         stTree *leftChild = stTree_getChild(reconciledTree, 0);
         stPhylogenyInfo *leftInfo = stTree_getClientData(leftChild);
         assert(leftInfo != NULL);
@@ -1378,35 +1166,6 @@ void stPhylogeny_reconciliationCostAtMostBinary(stTree *reconciledTree,
         stTree *rightSpecies = rightRecon->species;
 
         *losses += lossesInSubtree(species, leftSpecies, rightSpecies);
-    } else if (stTree_getChildNumber(reconciledTree) > 2) {
-        // We follow the algorithm for finding the minimum mutation
-        // cost in an apparent polytomy given by Lafond, Swenson,
-        // El-Mabrouk, 2012.
-        stHash *speciesToNumGenes;
-        stTree *linkedSpeciesTree = getLinkedSpeciesTree(species, reconciledTree, &speciesToNumGenes);
-        stHash *cupValues = getCupValues(linkedSpeciesTree, speciesToNumGenes);
-        stHash *dupsPerSpecies = stHash_construct2(NULL, free);
-        stHash *lossesPerSpecies = stHash_construct2(NULL, free);
-        dupLoss(linkedSpeciesTree, 1, speciesToNumGenes, cupValues, dupsPerSpecies, lossesPerSpecies);
-        stList *dupValues = stHash_getValues(dupsPerSpecies);
-        for (int64_t i = 0; i < stList_length(dupValues); i++) {
-            int64_t *dupsInSpecies = stList_get(dupValues, i);
-            *dups += *dupsInSpecies;
-        }
-
-        stList *lossValues = stHash_getValues(lossesPerSpecies);
-        for (int64_t i = 0; i < stList_length(lossValues); i++) {
-            int64_t *lossesInSpecies = stList_get(lossValues, i);
-            *losses += *lossesInSpecies;
-        }
-
-        stList_destruct(dupValues);
-        stList_destruct(lossValues);
-        stHash_destruct(lossesPerSpecies);
-        stHash_destruct(dupsPerSpecies);
-        stHash_destruct(cupValues);
-        stTree_destruct(linkedSpeciesTree);
-        stHash_destruct(speciesToNumGenes);
     }
 
     for (int64_t i = 0; i < stTree_getChildNumber(reconciledTree); i++) {
@@ -1507,7 +1266,7 @@ void stPhylogeny_rootByReconciliationAtMostBinary_R(stTree *curRoot,
 // and this function will reconcile geneTree, resetting any
 // reconciliation information that potentially already exists.
 stTree *stPhylogeny_rootByReconciliationAtMostBinary(stTree *geneTree,
-                                                     stHash *leafToSpecies) {
+                                                 stHash *leafToSpecies) {
     stPhylogeny_reconcileAtMostBinary(geneTree, leafToSpecies, false);
 
     // Find the root which has the lowest reconciliation cost.
@@ -1544,67 +1303,6 @@ stTree *stPhylogeny_rootByReconciliationAtMostBinary(stTree *geneTree,
         }
         return stTree_reRoot(bestRoot, stTree_getBranchLength(bestRoot)/2);
     }
-}
-
-static void getNewLeafToSpecies_R(stTree *node, stHash *leafToSpecies) {
-    if (stTree_getChildNumber(node) == 0) {
-        stPhylogenyInfo *info = stTree_getClientData(node);
-        assert(info != NULL);
-        stReconciliationInfo *recon = info->recon;
-        assert(recon != NULL);
-        stHash_insert(leafToSpecies, node, recon->species);
-    }
-    for (int64_t i = 0; i < stTree_getChildNumber(node); i++) {
-        getNewLeafToSpecies_R(stTree_getChild(node, i), leafToSpecies);
-    }
-    stTree_setClientData(node, NULL);
-}
-
-static stHash *getNewLeafToSpecies(stTree *rerooted) {
-    stHash *leafToSpecies = stHash_construct();
-    getNewLeafToSpecies_R(rerooted, leafToSpecies);
-    return leafToSpecies;
-}
-
-stTree *stPhylogeny_rootByReconciliationNaive(stTree *tree, stHash *leafToSpecies) {
-    stPhylogeny_reconcileAtMostBinary(tree, leafToSpecies, false);
-    stList *stack = stList_construct();
-    stList_append(stack, tree);
-    stTree *bestTree = NULL;
-    int64_t bestDups = INT64_MAX;
-    int64_t bestLosses = INT64_MAX;
-    while (stList_length(stack) > 0) {
-        stTree *node = stList_pop(stack);
-        for (int64_t i = 0; i < stTree_getChildNumber(node); i++) {
-            stList_append(stack, stTree_getChild(node, i));
-        }
-
-        stTree *curTree;
-        if (node != tree) {
-            curTree = stTree_reRootAndKeepClientData(node, stTree_getBranchLength(node)/2);
-        } else {
-            curTree = stTree_clone(tree);
-        }
-        stHash *newLeafToSpecies = getNewLeafToSpecies(curTree);
-        stPhylogeny_reconcileAtMostBinary(curTree, newLeafToSpecies, false);
-        stHash_destruct(newLeafToSpecies);
-        int64_t dups = 0, losses = 0;
-        stPhylogeny_reconciliationCostAtMostBinary(curTree, &dups, &losses);
-        if (dups < bestDups || (dups == bestDups && losses < bestLosses)) {
-            if (bestTree != NULL) {
-                stPhylogenyInfo_destructOnTree(bestTree);
-                stTree_destruct(bestTree);
-            }
-            bestTree = curTree;
-            bestDups = dups;
-            bestLosses = losses;
-        } else {
-            stPhylogenyInfo_destructOnTree(curTree);
-            stTree_destruct(curTree);
-        }
-    }
-    stList_destruct(stack);
-    return bestTree;
 }
 
 static stSet *climb(stTree *childGene, stTree *childLCARecon, stTree *parentGene,
@@ -1689,402 +1387,4 @@ void stPhylogeny_reconcileNonBinary(stTree *geneTree, stHash *leafToSpecies, boo
     stHash *N = stHash_construct();
     stPhylogeny_reconcileNonBinary_R(geneTree, leafToSpecies, N, relabelAncestors);
     stHash_destruct(N);
-}
-
-void stPhylogeny_nni(stTree *anc, stTree **tree1, stTree **tree2) {
-    if (stTree_getChildNumber(anc) == 0 || stTree_getParent(anc) == NULL) {
-        // The branch we will be NNI'ing (the branch above anc) isn't
-        // an internal branch.
-        *tree1 = NULL;
-        *tree2 = NULL;
-        return;
-    }
-
-    // Get the root of this tree, and a trail of breadcrumbs back to
-    // the position of this node (child of the branch to be NNI'd).
-    int64_t distToRoot = 0;
-    stTree *root = anc;
-    while (stTree_getParent(root) != NULL) {
-        root = stTree_getParent(root);
-        distToRoot++;
-    }
-
-    bool pathFromRoot[distToRoot];
-    int64_t i = distToRoot - 1;
-    root = anc;
-    stTree *prev;
-    while (stTree_getParent(root) != NULL) {
-        prev = root;
-        root = stTree_getParent(root);
-        if (prev == stTree_getChild(root, 0)) {
-            pathFromRoot[i--] = 0;
-        } else {
-            assert(prev == stTree_getChild(root, 1));
-            pathFromRoot[i--] = 1;
-        }
-    }    
-
-    *tree1 = stTree_clone(root);
-    *tree2 = stTree_clone(root);
-
-    // Traverse down to the right node in tree1 and tree2.
-    stTree *anc1 = *tree1;
-    for (i = 0; i < distToRoot; i++) {
-        if (pathFromRoot[i]) {
-            anc1 = stTree_getChild(anc1, 1);
-        } else {
-            anc1 = stTree_getChild(anc1, 0);
-        }
-    }
-
-    stTree *anc2 = *tree2;
-    for (i = 0; i < distToRoot; i++) {
-        if (pathFromRoot[i]) {
-            anc2 = stTree_getChild(anc2, 1);
-        } else {
-            anc2 = stTree_getChild(anc2, 0);
-        }
-    }
-
-    if (stTree_getParent(stTree_getParent(anc)) != NULL) {
-        /*
-         * Not a branch off the root node.
-         * Original tree:
-         *     \
-         *     /\
-         *    4 /\
-         *     3 /\
-         *      1  2
-         * Tree 1:
-         *     \
-         *     /\
-         *    2 /\
-         *     3 /\
-         *      1  4
-         * Tree 2:
-         *     \
-         *     /\
-         *    4 /\
-         *     2 /\
-         *      1  3
-         */
-        // Swap 2 and 4 in tree 1.
-        stTree *two = stTree_getChild(anc1, 1);
-        stTree *four;
-        if (stTree_getChild(stTree_getParent(stTree_getParent(anc1)), 0) == stTree_getParent(anc1)) {
-            four = stTree_getChild(stTree_getParent(stTree_getParent(anc1)), 1);
-        } else {
-            assert(stTree_getChild(stTree_getParent(stTree_getParent(anc1)), 1) == stTree_getParent(anc1));
-            four = stTree_getChild(stTree_getParent(stTree_getParent(anc1)), 0);
-        }
-        stTree_setParent(two, stTree_getParent(four));
-        stTree_setParent(four, anc1);
-        // Swap 2 and 3 in tree 2.
-        two = stTree_getChild(anc2, 1);
-        stTree *three;
-        if (stTree_getChild(stTree_getParent(anc2), 0) == anc2) {
-            three = stTree_getChild(stTree_getParent(anc2), 1);
-        } else {
-            assert(stTree_getChild(stTree_getParent(anc2), 1) == anc2);
-            three = stTree_getChild(stTree_getParent(anc2), 0);
-        }
-        stTree_setParent(two, stTree_getParent(three));
-        stTree_setParent(three, anc2);
-    } else {
-        /*
-         * A branch off the root node.
-         * Original tree:
-         *      /\
-         *     /  \
-         *    /    \
-         *   /\    /\
-         *  1  2  3  4
-         * Tree 1:
-         *      /\
-         *     /  \
-         *    /    \
-         *   /\    /\
-         *  1  4  3  2
-         * Tree 2:
-         *      /\
-         *     /  \
-         *    /    \
-         *   /\    /\
-         *  1  3  2  4
-         */
-        stTree *two = stTree_getChild(anc1, 1);
-        stTree *three, *four;
-        if (stTree_getChild(root, 0) == anc) {
-            three = stTree_getChild(stTree_getChild(*tree2, 1), 0);
-            four = stTree_getChild(stTree_getChild(*tree1, 1), 1);
-        } else {
-            assert(stTree_getChild(root, 1) == anc);
-            three = stTree_getChild(stTree_getChild(*tree2, 0), 0);
-            four = stTree_getChild(stTree_getChild(*tree1, 0), 1);
-        }
-        // Swap 2 and 4 in tree 1.
-        stTree_setParent(two, stTree_getParent(four));
-        stTree_setParent(four, anc1);
-        // Swap 2 and 3 in tree 2.
-        two = stTree_getChild(anc2, 1);
-        stTree_setParent(two, stTree_getParent(three));
-        stTree_setParent(three, anc2);
-    }
-}
-
-// Determines whether a split satisfies the four-point criterion of
-// Bandelt and Dress 1992. The "relaxed" parameter, if true, uses the
-// condition stated in the paper (where the intra-split distance must
-// not be larger than *both* inter-split distances), but if false,
-// uses a stricter condition (that the intra-split distance must be
-// smaller than *both* inter-split distances).
-static bool satisfiesFourPoint(stMatrix *distanceMatrix, stList *leftSplitIndices, stList *rightSplitIndices, bool relaxed) {
-    // This is a bit convoluted, but generates all possible
-    // unordered combinations of indices i, j in the left side of the split. i,j
-    // are distance matrix indices, not indices in the split list!
-    for (int64_t left_i = 0; left_i < stList_length(leftSplitIndices); left_i++) {
-        for (int64_t left_j = left_i + 1; left_j < stList_length(leftSplitIndices); left_j++) {
-            int64_t i = stIntTuple_get(stList_get(leftSplitIndices, left_i), 0);
-            int64_t j = stIntTuple_get(stList_get(leftSplitIndices, left_j), 0);
-            // Similarly, generate all possible unordered combinations
-            // k, l from the right side of the split.
-            for (int64_t right_i = 0; right_i < stList_length(rightSplitIndices); right_i++) {
-                for (int64_t right_j = right_i + 1; right_j < stList_length(rightSplitIndices); right_j++) {
-                    int64_t k = stIntTuple_get(stList_get(rightSplitIndices, right_i), 0);
-                    int64_t l = stIntTuple_get(stList_get(rightSplitIndices, right_j), 0);
-                    // Do the check.
-                    double intra = *stMatrix_getCell(distanceMatrix, i, j) + *stMatrix_getCell(distanceMatrix, k, l);
-                    double inter1 = *stMatrix_getCell(distanceMatrix, i, k) + *stMatrix_getCell(distanceMatrix, j, l);
-                    double inter2 = *stMatrix_getCell(distanceMatrix, i, l) + *stMatrix_getCell(distanceMatrix, j, k);
-                    if (relaxed) {
-                        if (intra >= inter1 && intra >= inter2) {
-                            return false;
-                        }
-                    } else {
-                        if (intra >= inter1 || intra >= inter2) {
-                            return false;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    // If we're here, then we've checked all the possible quartets without failing.
-    return true;
-}
-
-static stSplit *stSplit_construct(stList *leftSplit, stList *rightSplit, double isolationIndex) {
-    stSplit *ret = st_malloc(sizeof(stSplit));
-    ret->leftSplit = leftSplit;
-    ret->rightSplit = rightSplit;
-    ret->isolationIndex = isolationIndex;
-    return ret;
-}
-
-static void stSplit_destruct(stSplit *split) {
-    stList_destruct(split->leftSplit);
-    stList_destruct(split->rightSplit);
-    free(split);
-}
-
-// Compare two d-splits by their isolation indexes.
-static int stSplit_cmp(stSplit *split1, stSplit *split2) {
-    if (split1->isolationIndex < split2->isolationIndex) {
-        return -1;
-    } else if (split1->isolationIndex > split2->isolationIndex) {
-        return 1;
-    } else {
-        return 0;
-    }
-}
-
-static void assignIsolationIndex(stMatrix *distanceMatrix, stSplit *split) {
-    // We want to find the minimum of (maximum of inter-split distances - intra-split distance) / 2
-    // from all cross-split quartets.
-    double min_isolation = DBL_MAX;
-    for (int64_t left_i = 0; left_i < stList_length(split->leftSplit); left_i++) {
-        for (int64_t left_j = left_i + 1; left_j < stList_length(split->leftSplit); left_j++) {
-            int64_t i = stIntTuple_get(stList_get(split->leftSplit, left_i), 0);
-            int64_t j = stIntTuple_get(stList_get(split->leftSplit, left_j), 0);
-
-            for (int64_t right_i = 0; right_i < stList_length(split->rightSplit); right_i++) {
-                for (int64_t right_j = right_i + 1; right_j < stList_length(split->rightSplit); right_j++) {
-                    int64_t k = stIntTuple_get(stList_get(split->rightSplit, right_i), 0);
-                    int64_t l = stIntTuple_get(stList_get(split->rightSplit, right_j), 0);
-                    double intra = *stMatrix_getCell(distanceMatrix, i, j) + *stMatrix_getCell(distanceMatrix, k, l);
-                    double inter1 = *stMatrix_getCell(distanceMatrix, i, k) + *stMatrix_getCell(distanceMatrix, j, l);
-                    double inter2 = *stMatrix_getCell(distanceMatrix, i, l) + *stMatrix_getCell(distanceMatrix, j, k);
-                    double max_dist = intra;
-                    if (inter1 > max_dist) {
-                        max_dist = inter1;
-                    }
-                    if (inter2 > max_dist) {
-                        max_dist = inter2;
-                    }
-                    max_dist -= intra;
-                    if (max_dist < min_isolation) {
-                        min_isolation = max_dist;
-                    }
-                }
-            }
-        }
-    }
-    split->isolationIndex = min_isolation / 2;
-}
-
-stList *stPhylogeny_getSplits(stMatrix *distanceMatrix, bool relaxed) {
-    assert(stMatrix_m(distanceMatrix) == stMatrix_n(distanceMatrix));
-    stList *splits = stList_construct3(0, (void (*)(void *)) stSplit_destruct);
-    for (int64_t i = 1; i < stMatrix_m(distanceMatrix); i++) {
-        stList *singletonSplitLeft = stList_construct3(0, free);
-        stList_append(singletonSplitLeft, stIntTuple_construct1(i));
-        stList *singletonSplitRight = stList_construct3(0, free);
-        for (int64_t j = 0; j < i; j++) {
-            stList_append(singletonSplitRight, stIntTuple_construct1(j));
-        }
-        stList *newSplits = stList_construct3(0, (void (*)(void *)) stSplit_destruct);
-        stList_append(newSplits, stSplit_construct(singletonSplitLeft, singletonSplitRight, 0.0));
-        while (stList_length(splits) > 0) {
-            stSplit *split = stList_pop(splits);
-            stIntTuple *iTuple = stIntTuple_construct1(i);
-            stList_append(split->leftSplit, iTuple);
-            bool addToLeft = satisfiesFourPoint(distanceMatrix, split->leftSplit, split->rightSplit, relaxed);
-            stList_pop(split->leftSplit);
-            stList_append(split->rightSplit, iTuple);
-            bool addToRight = satisfiesFourPoint(distanceMatrix, split->leftSplit, split->rightSplit, relaxed);
-            stList_pop(split->rightSplit);
-            if (addToRight && addToLeft) {
-                // We are making two new splits, so have to clone the
-                // lists and their elements. For no particular reason,
-                // the cloned one becomes the one with i added to the
-                // right.
-
-                // First we handle the split with i added to its right
-                // split, cloning the existing list, and add that to
-                // the new split list.
-                stList *addedToRight_rightSplit = stList_construct3(0, free);
-                for (int64_t j = 0; j < stList_length(split->rightSplit); j++) {
-                    stIntTuple *new = stIntTuple_construct1(stIntTuple_get(stList_get(split->rightSplit, j), 0));
-                    stList_append(addedToRight_rightSplit, new);
-                }
-                stList_append(addedToRight_rightSplit, stIntTuple_construct1(i));
-                stList *addedToRight_leftSplit = stList_construct3(0, free);
-                for (int64_t j = 0; j < stList_length(split->leftSplit); j++) {
-                    stIntTuple *new = stIntTuple_construct1(stIntTuple_get(stList_get(split->leftSplit, j), 0));
-                    stList_append(addedToRight_leftSplit, new);
-                }
-                stSplit *addedToRight = stSplit_construct(addedToRight_leftSplit, addedToRight_rightSplit, 0.0);
-                stList_append(newSplits, addedToRight);
-
-                // Now add i to the left split of the existing split
-                // and add that to the new split list.
-                stList_append(split->leftSplit, iTuple);
-                stList_append(newSplits, split);
-            } else if (addToRight) {
-                stList_append(split->rightSplit, iTuple);
-                stList_append(newSplits, split);
-            } else if (addToLeft) {
-                stList_append(split->leftSplit, iTuple);
-                stList_append(newSplits, split);
-            } else {
-                stSplit_destruct(split);
-            }
-        }
-        stList_destruct(splits);
-        splits = newSplits;
-    }
-
-    // Remove the remaining trivial splits and assign isolation indexes.
-    for (int64_t i = 0; i < stList_length(splits); i++) {
-        stSplit *split = stList_get(splits, i);
-        assignIsolationIndex(distanceMatrix, split);
-        if (stList_length(split->leftSplit) == 1 || stList_length(split->rightSplit) == 1) {
-            // inefficient
-            stList_remove(splits, i);
-            stSplit_destruct(split);
-            // adjusting index to account for removed item
-            i--;
-        }
-    }
-
-    // Sort by isolation index in descending order.
-    stList_sort(splits, (int (*)(const void *, const void *)) stSplit_cmp);
-    stList_reverse(splits);
-    return splits;
-}
-
-static bool isCompatibleSplit(stList *splitIndices, stHash *indexToLeaf) {
-    stTree *parent = stTree_getParent(stHash_search(indexToLeaf, stList_get(splitIndices, 0)));
-    assert(parent != NULL);
-    for (int64_t i = 1; i < stList_length(splitIndices); i++) {
-        stTree *leaf = stHash_search(indexToLeaf, stList_get(splitIndices, i));
-        if (stTree_getParent(leaf) != parent) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static void applyCompatibleSplit(stList *splitIndices, stHash *indexToLeaf) {
-    stTree *parent = stTree_getParent(stHash_search(indexToLeaf, stList_get(splitIndices, 0)));
-    stTree *newNode = stTree_construct();
-    stTree_setParent(newNode, parent);
-    // Branch lengths are arbitrarily set to 1.0.
-    stTree_setBranchLength(newNode, 1.0);
-    for (int64_t i = 0; i < stList_length(splitIndices); i++) {
-        stTree *leaf = stHash_search(indexToLeaf, stList_get(splitIndices, i));
-        stTree_setParent(leaf, newNode);
-    }
-}
-
-stTree *stPhylogeny_greedySplitDecomposition(stMatrix *distanceMatrix, bool relaxed) {
-    assert(stMatrix_m(distanceMatrix) == stMatrix_n(distanceMatrix));
-    stHash *indexToLeaf = stHash_construct3((uint64_t (*)(const void *)) stIntTuple_hashKey, (int (*)(const void *, const void *)) stIntTuple_equalsFn, (void (*)(void *)) stIntTuple_destruct, NULL);
-    // We start out with a complete star phylogeny.
-    stTree *root = stTree_construct();
-    for (int64_t i = 0; i < stMatrix_m(distanceMatrix); i++) {
-        stTree *leaf = stTree_construct();
-        stHash_insert(indexToLeaf, stIntTuple_construct1(i), leaf);
-        char *label = stString_print_r("%" PRIi64, i);
-        stTree_setLabel(leaf, label);
-        free(label);
-        stTree_setParent(leaf, root);
-        // The branch lengths are all arbitrarily set to 1.0 to avoid
-        // infinite branch lengths setting up a minefield for any
-        // arithmetic later on.
-        stTree_setBranchLength(leaf, 1.0);
-    }
-
-    stList *splits = stPhylogeny_getSplits(distanceMatrix, relaxed);
-    // Start adding compatible splits to the tree, creating a new
-    // internal node for each split which groups together one of its
-    // sides.
-    for (int64_t i = 0; i < stList_length(splits); i++) {
-        stSplit *split = stList_get(splits, i);
-        if (isCompatibleSplit(split->leftSplit, indexToLeaf)) {
-            applyCompatibleSplit(split->leftSplit, indexToLeaf);
-        } else if (isCompatibleSplit(split->rightSplit, indexToLeaf)) {
-            applyCompatibleSplit(split->rightSplit, indexToLeaf);
-        }
-    }
-    stList_destruct(splits);
-    stHash_destruct(indexToLeaf);
-    stPhylogeny_addStIndexedTreeInfo(root);
-    return root;
-}
-
-void stPhylogeny_applyJukesCantorCorrection(stMatrix *distanceMatrix) {
-    for (int64_t i = 0; i < stMatrix_m(distanceMatrix); i++) {
-        for (int64_t j = 0; j < stMatrix_n(distanceMatrix); j++) {
-            if (*stMatrix_getCell(distanceMatrix, i, j) < 0.75) {
-                *stMatrix_getCell(distanceMatrix, i, j) = -0.75 * log(1 - 4 * (*stMatrix_getCell(distanceMatrix, i, j)) / 3);
-            } else {
-                // Having <25% identity isn't valid under the JC
-                // model, so we just set the distance to something
-                // higher than any realistic distance (not infinity as
-                // that may break some arithmetic down the road).
-                *stMatrix_getCell(distanceMatrix, i, j) = 10000.0;
-            }
-        }
-    }
 }

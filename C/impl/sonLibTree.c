@@ -87,7 +87,7 @@ static void stTree_clearClientData(stTree *tree, bool recursive) {
 static void tree_cloneFlippedTree(stTree *node, stTree *oldNode,
                                   stTree *nodeToAddTo,
                                   double branchLength) {
-    if(stTree_getParent(node) != NULL || stTree_getChildNumber(node) > 2) {
+    if(stTree_getParent(node) != NULL) {
         // This node isn't the root
         stTree *clonedNode = stTree_cloneNode(node);
         stTree_setParent(clonedNode, nodeToAddTo);
@@ -100,16 +100,14 @@ static void tree_cloneFlippedTree(stTree *node, stTree *oldNode,
                 stTree_setParent(clonedChild, clonedNode);
             }
         }
-
-        if (stTree_getParent(node) != NULL) {
-            // Recurse on the parent of this node.
-            tree_cloneFlippedTree(stTree_getParent(node), node,
-                                  clonedNode, stTree_getBranchLength(node));
-        }
-    } else if (stTree_getParent(node) == NULL) {
-        // We have to treat the root specially in binary trees,
-        // because we're going to eliminate it. Just add all the other
-        // children of the root as children of nodeToAddTo.
+        
+        // Recurse on the parent of this node.
+        tree_cloneFlippedTree(stTree_getParent(node), node,
+                              clonedNode, stTree_getBranchLength(node));
+    } else {
+        // We have to treat the root specially, because we're going to
+        // eliminate it. Just add all the other children of the root
+        // as children of nodeToAddTo.
         for(int64_t i = 0; i < stTree_getChildNumber(node); i++) {
             stTree *child = stTree_getChild(node, i);
             if(child != oldNode) {
@@ -122,13 +120,11 @@ static void tree_cloneFlippedTree(stTree *node, stTree *oldNode,
 }
 
 // Return a new tree rooted a given distance above the given node.
-static stTree *stTree_reRootP(stTree *node, double distanceAbove, bool clearClientData) {
+stTree *stTree_reRoot(stTree *node, double distanceAbove) {
     if(stTree_getParent(node) == NULL) {
         // This node is already the root.
         stTree *newRoot = stTree_clone(node);
-        if (clearClientData) {
-            stTree_clearClientData(newRoot, true);
-        }
+        stTree_clearClientData(newRoot, true);
         return newRoot;
     }
 
@@ -142,18 +138,8 @@ static stTree *stTree_reRootP(stTree *node, double distanceAbove, bool clearClie
     tree_cloneFlippedTree(stTree_getParent(node), node, newRoot,
                           stTree_getBranchLength(node) - distanceAbove);
     // Having the same client data can be a problem
-    if (clearClientData) {
-        stTree_clearClientData(newRoot, true);
-    }
+    stTree_clearClientData(newRoot, true);
     return newRoot;
-}
-
-stTree *stTree_reRoot(stTree *node, double distanceAbove) {
-    return stTree_reRootP(node, distanceAbove, true);
-}
-
-stTree *stTree_reRootAndKeepClientData(stTree *node, double distanceAbove) {
-    return stTree_reRootP(node, distanceAbove, false);
 }
 
 stTree *stTree_getParent(stTree *tree) {

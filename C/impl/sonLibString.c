@@ -13,6 +13,17 @@
 
 #include "sonLibGlobalsInternal.h"
 
+
+char *stString_concat(const char *s1, const char *s2)
+{
+    char *result = malloc(strlen(s1)+strlen(s2)+1);//+1 for the null-terminator
+    //in real code you would check for errors in malloc here
+    strcpy(result, s1);
+    strcat(result, s2);
+    return result;
+}
+
+
 char *stString_copy(const char *string) {
     if (string == NULL) {
         return NULL;
@@ -252,6 +263,21 @@ char *stString_reverseComplementString(const char *string) {
     cA = st_malloc(sizeof(char) * (j + 1));
     for (i = 0; i < j; i++) {
         cA[i] = stString_reverseComplementChar(string[j - 1 - i]);
+    }
+    cA[j] = '\0';
+    return cA;
+}
+
+
+char *stString_ComplementString(const char *string) {
+    int64_t i, j;
+
+    j = strlen(string);
+    char *cA;
+
+    cA = st_malloc(sizeof(char) * (j + 1));
+    for (i = 0; i < j; i++) {
+        cA[i] = stString_reverseComplementChar(string[i]);
     }
     cA[j] = '\0';
     return cA;

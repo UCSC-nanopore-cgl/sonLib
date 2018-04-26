@@ -12,7 +12,7 @@ struct _stGraph {
 };
 
 stGraph *stGraph_construct(int64_t vertexNo) {
-    stGraph *graph = st_malloc(sizeof(stGraph));
+    stGraph *graph = st_malloc(sizeof(graph));
     graph->vertexNo = vertexNo;
     graph->adjLists = st_calloc(vertexNo, sizeof(stEdge *));
     return graph;

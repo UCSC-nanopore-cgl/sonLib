@@ -50,14 +50,6 @@ void stSet_insert(stSet *set, void *key) {
     }
     stHash_insert(set->hash, key, key); 
 }
-void stSet_insertAll(stSet *set, stSet *setToAdd) {
-    stSetIterator *setIt = stSet_getIterator(setToAdd);
-    void *o;
-    while((o = stSet_getNext(setIt)) != NULL) {
-        stSet_insert(set, o);
-    }
-    stSet_destructIterator(setIt);
-}
 void *stSet_search(stSet *set, void *key) {
     return stHash_search(set->hash, key);
 }
@@ -67,17 +59,6 @@ void *stSet_remove(stSet *set, void *key) {
 void *stSet_removeAndFreeKey(stSet *set, void *key) {
     return stHash_removeAndFreeKey(set->hash, key);
 }
-
-void stSet_removeAll(stSet *set, stSet *subset) {
-    stSetIterator *it = stSet_getIterator(subset);
-
-    void *o;
-    while((o = stSet_getNext(it)) != NULL) {
-        stSet_remove(set, o);
-    }
-    stSet_destructIterator(it);
-}
-
 int64_t stSet_size(stSet *set) {
     return stHash_size(set->hash);
 }
@@ -125,15 +106,6 @@ static int stSet_hashersEqual(stSet *set1, stSet *set2) {
 }
 static int stSet_equalitiesEqual(stSet *set1, stSet *set2) {
     return stSet_getEqualityFunction(set1) == stSet_getEqualityFunction(set2);
-}
-void *stSet_peek(stSet *set) {
-    if(stSet_size(set) == 0) {
-        stThrowNew(SET_EXCEPTION_ID, "Set is empty.");
-    }
-    stSetIterator *setIt = stSet_getIterator(set);
-    void *object = stSet_getNext(setIt);
-    stSet_destructIterator(setIt);
-    return object;
 }
 static void stSet_verifySetsHaveSameFunctions(stSet *set1, stSet *set2) {
     if (!stSet_hashersEqual(set1, set2)) {
@@ -195,21 +167,4 @@ stSet *stSet_getDifference(stSet *set1, stSet *set2) {
     }
     stSet_destructIterator(sit);
     return set3;
-}
-
-bool stSet_equals(stSet *set1, stSet *set2) {
-    if(stSet_size(set1) != stSet_size(set2)) {
-        return 0;
-    }
-    stSet *setI = stSet_getIntersection(set1, set2);
-    bool b = stSet_size(setI) == stSet_size(set1);
-    stSet_destruct(setI);
-    return b;
-}
-
-bool stSet_isSubset(stSet *parentSet, stSet *putativeSubset) {
-    stSet *setI = stSet_getIntersection(parentSet, putativeSubset);
-    bool b = stSet_size(setI) == stSet_size(putativeSubset);
-    stSet_destruct(setI);
-    return b;
 }

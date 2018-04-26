@@ -216,7 +216,7 @@ static void test_stConnectivity_compareWithNaive(CuTest *testCase) {
 	int nEdgesToAdd = 800;
 	int nEdgesToRemove = 500;
 	int nQueries = 10000;
-	stList *nodes = stList_construct3(0, free);
+	stList *nodes = stList_construct();
 	stNaiveConnectivity *naive = stNaiveConnectivity_construct();
 	connectivity = stConnectivity_construct();
 	//add nodes
@@ -302,11 +302,12 @@ static void test_stConnectivity_compareWithNaive(CuTest *testCase) {
 
 		CuAssertTrue(testCase, setsEqual(nodesInComponent, trueNodesInComponent));
 		stSet_destruct(nodesInComponent);
+		stSet_destruct(trueNodesInComponent);
 	}
 	stList_destruct(nodes);
 	stList_destruct(trueComponents);
 	stList_destruct(components);
-	stNaiveConnectivity_destruct(naive);
+	//stNaiveConnectivity_destruct(naive);
 
 	teardown();
 }

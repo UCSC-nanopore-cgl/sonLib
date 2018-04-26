@@ -45,7 +45,6 @@ static void test_stCompression_compressAndDecompressP(CuTest *testCase, int64_t 
         }
         free(randomString);
         free(randomString2);
-        free(compressedString);
     }
     st_logDebug("Got a compression ration of %f from %" PRIi64 " bytes compressed and %" PRIi64 " bytes uncompressed \n", (double)bytesCompressed/bytesDecompressed, bytesCompressed, bytesDecompressed);
 }

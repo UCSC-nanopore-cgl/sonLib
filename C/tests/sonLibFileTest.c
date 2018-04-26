@@ -43,24 +43,14 @@ static void setup() {
 static void test_stFile_getLineFromFile(CuTest *testCase) {
     setup();
     FILE *fileHandle = fopen(tempFileName1, "r");
-    char *s = stFile_getLineFromFile(fileHandle);
-    CuAssertStrEquals(testCase, "hello world", s);
-    free(s);
-    s = stFile_getLineFromFile(fileHandle);
-    CuAssertStrEquals(testCase, "foo bar 123456", s);
-    free(s);
-    s = stFile_getLineFromFile(fileHandle);
-    CuAssertStrEquals(testCase, " ", s);
-    free(s);
-    s = stFile_getLineFromFile(fileHandle);
-    CuAssertStrEquals(testCase, "", s);
-    free(s);
-    s = stFile_getLineFromFile(fileHandle);
-    CuAssertStrEquals(testCase, "bye bye", s);
-    free(s);
-    s = stFile_getLineFromFile(fileHandle);
-    CuAssertStrEquals(testCase, "\t", s);
-    free(s);
+    CuAssertStrEquals(testCase, "hello world",
+            stFile_getLineFromFile(fileHandle));
+    CuAssertStrEquals(testCase, "foo bar 123456",
+            stFile_getLineFromFile(fileHandle));
+    CuAssertStrEquals(testCase, " ", stFile_getLineFromFile(fileHandle));
+    CuAssertStrEquals(testCase, "", stFile_getLineFromFile(fileHandle));
+    CuAssertStrEquals(testCase, "bye bye", stFile_getLineFromFile(fileHandle));
+    CuAssertStrEquals(testCase, "\t", stFile_getLineFromFile(fileHandle));
     CuAssertTrue(testCase, NULL == stFile_getLineFromFile(fileHandle));
     CuAssertTrue(testCase, NULL == stFile_getLineFromFile(fileHandle));
     CuAssertTrue(testCase, NULL == stFile_getLineFromFile(fileHandle));
@@ -133,21 +123,11 @@ static void test_stFile_getFileNamesInDirectory(CuTest *testCase) {
 }
 
 static void test_stFile_pathJoin(CuTest *testCase) {
-    char *s = stFile_pathJoin("hello", "world");
-    CuAssertStrEquals(testCase, "hello/world", s);
-    free(s);
-    s = stFile_pathJoin("hello/", "world");
-    CuAssertStrEquals(testCase, "hello/world", s);
-    free(s);
-    s = stFile_pathJoin("", "world");
-    CuAssertStrEquals(testCase, "world", s);
-    free(s);
-    s = stFile_pathJoin("hello", "");
-    CuAssertStrEquals(testCase, "hello/", s);
-    free(s);
-    s = stFile_pathJoin("", "");
-    CuAssertStrEquals(testCase, "", s);
-    free(s);
+    CuAssertStrEquals(testCase, "hello/world", stFile_pathJoin("hello", "world"));
+    CuAssertStrEquals(testCase, "hello/world", stFile_pathJoin("hello/", "world"));
+    CuAssertStrEquals(testCase, "world", stFile_pathJoin("", "world"));
+    CuAssertStrEquals(testCase, "hello/", stFile_pathJoin("hello", ""));
+    CuAssertStrEquals(testCase, "", stFile_pathJoin("", ""));
 }
 
 CuSuite* sonLibFileTestSuite(void) {

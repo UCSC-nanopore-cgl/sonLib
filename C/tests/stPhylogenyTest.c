@@ -1,5 +1,4 @@
 #include <stdlib.h>
-#include <math.h>
 #include "CuTest.h"
 #include "sonLib.h"
 #include "stPhylogeny.h"
@@ -430,7 +429,7 @@ static void checkDistanceFunctions(stTree *tree, CuTest *testCase) {
 // stPhylogeny functions on the resulting trees.
 static void testRandomNeighborJoin(CuTest *testCase) {
     int64_t testNum;
-    for (testNum = 0; testNum < 20; testNum++) {
+    for (testNum = 0; testNum < 50; testNum++) {
         // Run neighbor-joining
         int64_t numLeaves = st_randomInt64(3, 300);
         stMatrix *matrix = getRandomDistanceMatrix(numLeaves);
@@ -695,7 +694,6 @@ static void testJoinCosts_random(CuTest *testCase) {
         stHash_destruct(indexToSpecies);
         stHash_destruct(speciesToIndex);
         stTree_destruct(speciesTree);
-        stMatrix_destruct(joinCosts);
     }
 }
 
@@ -789,7 +787,7 @@ static void testGuidedNeighborJoiningReducesToNeighborJoining(CuTest *testCase) 
         // Get the MRCA matrix
         int64_t **speciesMRCAMatrix = stPhylogeny_getMRCAMatrix(speciesTree, speciesToIndex);
 
-        stTree *guidedNeighborJoiningTree = stPhylogeny_guidedNeighborJoining(distanceMatrix, similarityMatrix, joinCosts, matrixIndexToJoinCostIndex, speciesToIndex, speciesMRCAMatrix, speciesTree);
+        stTree *guidedNeighborJoiningTree = stPhylogeny_guidedNeighborJoining(similarityMatrix, joinCosts, matrixIndexToJoinCostIndex, speciesToIndex, speciesMRCAMatrix, speciesTree);
 
         for(int i = 0; i < stTree_getNumNodes(speciesTree); i++) {
           free(speciesMRCAMatrix[i]);
@@ -864,12 +862,8 @@ static void testGuidedNeighborJoiningLowersReconCost(CuTest *testCase)
         // get MRCA matrix
         int64_t **speciesMRCAMatrix = stPhylogeny_getMRCAMatrix(speciesTree, speciesToIndex);
 
-        // get distance matrix
-        stMatrix *distanceMatrix = getDistanceMatrixFromSimilarityMatrix(similarityMatrix);
+        stTree *guidedNeighborJoiningTree = stPhylogeny_guidedNeighborJoining(similarityMatrix, joinCosts, matrixIndexToJoinCostIndex, speciesToIndex, speciesMRCAMatrix, speciesTree);
 
-        stTree *guidedNeighborJoiningTree = stPhylogeny_guidedNeighborJoining(distanceMatrix, similarityMatrix, joinCosts, matrixIndexToJoinCostIndex, speciesToIndex, speciesMRCAMatrix, speciesTree);
-
-        stMatrix_destruct(distanceMatrix);
         for(int i = 0; i < stTree_getNumNodes(speciesTree); i++) {
           free(speciesMRCAMatrix[i]);
         }
@@ -992,9 +986,7 @@ static void testStPhylogeny_rootByReconciliationAtMostBinary_simpleTests(CuTest 
     stHash_insert(leafToSpecies, stTree_findChild(foo, "2"), stTree_findChild(speciesTree, "human"));
     stHash_insert(leafToSpecies, stTree_findChild(foo, "3"), stTree_findChild(speciesTree, "human"));
     rooted = stPhylogeny_rootByReconciliationAtMostBinary(foo, leafToSpecies);
-    char *s = stTree_getNewickTreeString(rooted);
-    CuAssertStrEquals(testCase, "((0:1,1:1):0.5,(2:1,3:2):0.5);", s);
-    free(s);
+    CuAssertStrEquals(testCase, "((0:1,1:1):0.5,(2:1,3:2):0.5);", stTree_getNewickTreeString(rooted));
     stPhylogenyInfo_destructOnTree(foo);
     stTree_destruct(foo);
     stTree_destruct(speciesTree);
@@ -1007,11 +999,11 @@ static void testStPhylogeny_rootByReconciliationAtMostBinary_simpleTests(CuTest 
 // is a tree with the lowest possible dup cost, with loss cost as
 // tiebreaker.
 static void testStPhylogeny_rootByReconciliationAtMostBinary_random(CuTest *testCase) {
-    for(int64_t testNum = 0; testNum < 1; testNum++) {
-        int64_t numSpecies = st_randomInt64(3, 50);
+    for(int64_t testNum = 0; testNum < 10; testNum++) {
+        int64_t numSpecies = st_randomInt64(3, 100);
         stMatrix *matrix = getRandomDistanceMatrix(numSpecies);
         globalSpeciesTree = stPhylogeny_neighborJoin(matrix, NULL);
-        int64_t numGenes = st_randomInt64(3, 100);
+        int64_t numGenes = st_randomInt64(3, 300);
         stMatrix_destruct(matrix);
         matrix = getRandomDistanceMatrix(numGenes);
         stTree *geneTree = stPhylogeny_neighborJoin(matrix, NULL);
@@ -1025,17 +1017,12 @@ static void testStPhylogeny_rootByReconciliationAtMostBinary_random(CuTest *test
             stHash_insert(globalLeafToSpecies, gene, species);
         }
 
-        // Find the best rooting using either the naive or optimized version.
-        stTree *rooted;
-        if (st_random() > 0.5) {
-            rooted = stPhylogeny_rootByReconciliationAtMostBinary(geneTree, globalLeafToSpecies);
-        } else {
-            rooted = stPhylogeny_rootByReconciliationNaive(geneTree, globalLeafToSpecies);
-        }
+        // Find the best rooting.
+        stTree *rooted = stPhylogeny_rootByReconciliationAtMostBinary(geneTree, globalLeafToSpecies);
         stPhylogeny_addStIndexedTreeInfo(rooted);
         // This is pretty stupid, but we have to map from the
         // leafToSpecies on the old gene tree to this rerooted
-        // one.
+        // one. TODO: Probably the leafToSpecies concept needs to be rethought.
         // Probably should use matrix index -> species node instead.
         stHash *myLeafToSpecies = stHash_construct();
         stHashIterator *hashIt = stHash_getIterator(globalLeafToSpecies);
@@ -1046,7 +1033,6 @@ static void testStPhylogeny_rootByReconciliationAtMostBinary_random(CuTest *test
             stTree *newGene = stPhylogeny_getLeafByIndex(rooted, index->matrixIndex);
             stHash_insert(myLeafToSpecies, newGene, species);
         }
-        stHash_destructIterator(hashIt);
         stPhylogeny_reconcileAtMostBinary(rooted, myLeafToSpecies, false);
         int64_t dups = 0, losses = 0;
         stPhylogeny_reconciliationCostAtMostBinary(rooted, &dups, &losses);
@@ -1221,238 +1207,8 @@ static void testStPhylogeny_reconcileNonBinary(CuTest *testCase) {
     stHash_destruct(leafToSpecies);
 }
 
-static void testStPhylogeny_nni(CuTest *testCase) {
-    stTree *geneTree = stTree_parseNewickString("(NZOHlLtJ.chr9_87081620_87115187|0|16656-16694.30:0.000120563,((C57B6J.9_87174839_87208406|16656-16694.30:0.0001,C57B6NJ.chr9_90403979_90439438|16656-16694.27:0.0001)27:0.00132877,(C57B6NJ.chr9_90403979_90439438|18548-18586.29:0.00113208,(C57B6NJ.chr1_3987551_4018377|20930-20968.30:0.0001,C57B6NJ.chr1_3987551_4018377|15210-15248.30:0.0001)branch:0.0554717)27:0.00291265)30:0.000120563)30;");
-    stTree *tree1, *tree2;
-    stPhylogeny_nni(stTree_findChild(geneTree, "branch"), &tree1, &tree2);
-    CuAssertTrue(testCase, !stTree_equals(geneTree, tree1));
-    CuAssertTrue(testCase, !stTree_equals(geneTree, tree2));
-    // Truth set. OK, these are rooted and have branch lengths, so
-    // it's concievable this test could fail without the method being
-    // wrong. But right now we have no way to test if the unrooted
-    // topology is equal.
-    stTree *neighbor1 = stTree_parseNewickString("(NZOHlLtJ.chr9_87081620_87115187|0|16656-16694.30:0.000120563,((C57B6NJ.chr9_90403979_90439438|18548-18586.29:0.00113208,(C57B6NJ.chr1_3987551_4018377|20930-20968.30:0.0001,(C57B6J.9_87174839_87208406|16656-16694.30:0.0001,C57B6NJ.chr9_90403979_90439438|16656-16694.27:0.0001)27:0.00132877)branch:0.0554717)27:0.00291265,C57B6NJ.chr1_3987551_4018377|15210-15248.30:0.0001)30:0.000120563)30;");
-    stTree *neighbor2 = stTree_parseNewickString("(NZOHlLtJ.chr9_87081620_87115187|0|16656-16694.30:0.000120563,((C57B6J.9_87174839_87208406|16656-16694.30:0.0001,C57B6NJ.chr9_90403979_90439438|16656-16694.27:0.0001)27:0.00132877,((C57B6NJ.chr1_3987551_4018377|20930-20968.30:0.0001,C57B6NJ.chr9_90403979_90439438|18548-18586.29:0.00113208)branch:0.0554717,C57B6NJ.chr1_3987551_4018377|15210-15248.30:0.0001)27:0.00291265)30:0.000120563)30;");
-    CuAssertTrue(testCase, stTree_equals(tree1, neighbor1) || stTree_equals(tree1, neighbor2));
-    CuAssertTrue(testCase, stTree_equals(tree2, neighbor1) || stTree_equals(tree2, neighbor2));
-    CuAssertTrue(testCase, !stTree_equals(tree1, tree2));
-
-    stTree_destruct(geneTree);
-    stTree_destruct(tree1);
-    stTree_destruct(tree2);
-    stTree_destruct(neighbor1);
-    stTree_destruct(neighbor2);
-}
-
-static void testStPhylogeny_getSplits(CuTest *testCase) {
-    // Check against the example given in Bandelt and Dress, 1992.
-    double distanceArray[7][7] = {
-        { 0,  4,  5,  7, 13,  8,  6},
-        { 4,  0,  1,  3,  9, 12, 10},
-        { 5,  1,  0,  2,  8, 13, 11},
-        { 7,  3,  2,  0,  6, 11, 13},
-        {13,  9,  8,  6,  0,  5,  7},
-        { 8, 12, 13, 11,  5,  0,  2},
-        { 6, 10, 11, 13,  7,  2,  0}
-    };
-    stMatrix *distanceMatrix = stMatrix_construct(7, 7);
-    for (int64_t i = 0; i < 7; i++) {
-        for (int64_t j = 0; j < 7; j++) {
-            *stMatrix_getCell(distanceMatrix, i, j) = distanceArray[i][j];
-        }
-    }
-    stList *splits = stPhylogeny_getSplits(distanceMatrix, true);
-    CuAssertIntEquals(testCase, 4, stList_length(splits));
-
-    // Check the individual splits. We don't check the actual indices
-    // within the splits, because that would be very long, and it
-    // would be very hard to be wrong about the content of the
-    // splits without the isolation index / split sizes being wrong as
-    // well.
-    stSplit *split1 = stList_get(splits, 0);
-    CuAssertDblEquals(testCase, 6.0, split1->isolationIndex, 0.01);
-    CuAssertTrue(testCase, stList_length(split1->leftSplit) == 3 || stList_length(split1->rightSplit) == 3);
-    CuAssertTrue(testCase, stList_length(split1->leftSplit) == 4 || stList_length(split1->rightSplit) == 4);
-
-    stSplit *split2 = stList_get(splits, 1);
-    CuAssertDblEquals(testCase, 4.0, split2->isolationIndex, 0.01);
-    CuAssertTrue(testCase, stList_length(split2->leftSplit) == 3 || stList_length(split2->rightSplit) == 3);
-    CuAssertTrue(testCase, stList_length(split2->leftSplit) == 4 || stList_length(split2->rightSplit) == 4);
-
-    stSplit *split3 = stList_get(splits, 2);
-    CuAssertDblEquals(testCase, 2.0, split3->isolationIndex, 0.01);
-    CuAssertTrue(testCase, stList_length(split3->leftSplit) == 3 || stList_length(split3->rightSplit) == 3);
-    CuAssertTrue(testCase, stList_length(split3->leftSplit) == 4 || stList_length(split3->rightSplit) == 4);
-
-    stSplit *split4 = stList_get(splits, 3);
-    CuAssertDblEquals(testCase, 1.0, split4->isolationIndex, 0.01);
-    CuAssertTrue(testCase, stList_length(split4->leftSplit) == 3 || stList_length(split4->rightSplit) == 3);
-    CuAssertTrue(testCase, stList_length(split4->leftSplit) == 4 || stList_length(split4->rightSplit) == 4);
-
-    stMatrix_destruct(distanceMatrix);
-    stList_destruct(splits);
-}
-
-static void testStPhylogeny_greedySplitDecomposition(CuTest *testCase) {
-    /*
-  _______________ MOUSE.2
- |
- |                ________________ MOUSE.0
- |               |
- |               |                 ________________ RHESUS.0
- |               |________________|
- |_______________|                |                 ________________ CHIMP.0
- |               |                |________________|
- |               |                                 |________________ HUMAN.0
- |               |
-_|               |                 ________________ CAT.0
- |               |________________|
- |                                |________________ DOG.0
- |
- |                ________________ CAT.2
- |_______________|
- |               |________________ DOG.2
- |
- |                ________________ CHIMP.2
- |               |
- |_______________|________________ HUMAN.2
-                 |
-                 |________________ RHESUS.2
-    */
-    // array ordering: ['CHIMP.0', 'CAT.2', 'CHIMP.2', 'CAT.0', 'HUMAN.2', 'HUMAN.0', 'RHESUS.0', 'RHESUS.2', 'MOUSE.0', 'DOG.0', 'MOUSE.2', 'DOG.2']
-    double distanceArray[12][12] = {
-        { 0.0,    0.225,  0.22,   0.06,   0.215,  0.0,    0.015,  0.21,   0.075,  0.06,   0.235,  0.255,},
-        { 0.225,  0.0,    0.05,   0.22,   0.045,  0.225,  0.23,   0.04,   0.235,  0.225,   0.09,   0.03, },
-        { 0.22,   0.05,   0.0,    0.215,  0.015,  0.22,   0.225,  0.01,   0.23,   0.22,   0.08,   0.08, },
-        { 0.06,   0.22,   0.215,  0.0,    0.21,   0.06,   0.07,   0.205,  0.07,   0.02,   0.24,   0.25, },
-        { 0.215,  0.045,  0.015,  0.21,   0.0,    0.215,  0.22,   0.005,  0.225,  0.215,   0.075,  0.075,},
-        { 0.0,    0.225,  0.22,   0.06,   0.215,  0.0,    0.015,  0.21,   0.075,  0.06,   0.235,  0.255,},
-        { 0.015,  0.23,   0.225,  0.07,   0.22,   0.015,  0.0,    0.215,  0.085,  0.07,   0.24,   0.26, },
-        { 0.21,   0.04,   0.01,   0.205,  0.005,  0.21,   0.215,  0.0,    0.22,   0.21,   0.07,   0.07, },
-        { 0.075,  0.235,  0.23,   0.07,   0.225,  0.075,  0.085,  0.22,   0.0,    0.075,   0.255,  0.265,},
-        { 0.06,   0.225,  0.22,   0.02,   0.215,  0.06,   0.07,   0.21,   0.075,  0.0,    0.245,   0.255,},
-        { 0.235,  0.09,   0.08,   0.24,   0.075,  0.235,  0.24,   0.07,   0.255,  0.245,  0.0,  0.115,},
-        { 0.255,  0.03,   0.08,   0.25,   0.075,  0.255,  0.26,   0.07,   0.265,  0.255,   0.115,  0.0  }
-    };
-    stMatrix *distanceMatrix = stMatrix_construct(12, 12);
-    for (int64_t i = 0; i < 12; i++) {
-        for (int64_t j = 0; j < 12; j++) {
-            *stMatrix_getCell(distanceMatrix, i, j) = distanceArray[i][j];
-        }
-    }
-
-    stTree *tree = stPhylogeny_greedySplitDecomposition(distanceMatrix, false);
-    stTree *mouse2 = stTree_findChild(tree, "10");
-    stTree *rooted = stTree_reRoot(mouse2, 0.0);
-    char *newick = stTree_getNewickTreeString(rooted);
-    CuAssertStrEquals(testCase, "(10:0,((1:1,11:1):1,(2:1,4:1,7:1):1,(8:1,(6:1,(0:1,5:1):1):1,(3:1,9:1):1):1):1);", newick);
-    free(newick);
-    stMatrix_destruct(distanceMatrix);
-    stTree_destruct(rooted);
-    stPhylogenyInfo_destructOnTree(tree);
-    stTree_destruct(tree);
-}
-
-static void testStPhylogeny_getLinkedSpeciesTree(CuTest *testCase) {
-    // Hackily including the definition here, so I don't have to
-    // create a whole stPhylogeny_private.h and worry about where it
-    // gets included. Bad practice.
-    stTree *getLinkedSpeciesTree(stTree *speciesTree, stTree *polytomy, stHash **speciesToNumGenes);
-    stTree *speciesTree = stTree_parseNewickString("(((a1,(a2.1,a2.2)a2)a,b)e,((c1, c2)c,(d1, d2)d)f)g;");
-    stTree *polytomy = stTree_parseNewickString("(a-1,a-2,a-3,a-4,b-1,b-2,c-1,e-1)G;");
-    stHash *leafToSpecies = buildLeafToSpeciesUsingDashSeparator(polytomy, speciesTree);
-    stPhylogeny_reconcileAtMostBinary(polytomy, leafToSpecies, false);
-    stHash *speciesToNumGenes;
-    stTree *linkedSpeciesTree = getLinkedSpeciesTree(speciesTree, polytomy, &speciesToNumGenes);
-    char *newick = stTree_getNewickTreeString(linkedSpeciesTree);
-    CuAssertStrEquals(testCase, "((a,b)e,(c,d)f)g;", newick);
-    CuAssertIntEquals(testCase, 4, *((int64_t *) stHash_search(speciesToNumGenes, stTree_findChild(linkedSpeciesTree, "a"))));
-    CuAssertIntEquals(testCase, 2, *((int64_t *) stHash_search(speciesToNumGenes, stTree_findChild(linkedSpeciesTree, "b"))));
-    CuAssertIntEquals(testCase, 1, *((int64_t *) stHash_search(speciesToNumGenes, stTree_findChild(linkedSpeciesTree, "c"))));
-    CuAssertIntEquals(testCase, 1, *((int64_t *) stHash_search(speciesToNumGenes, stTree_findChild(linkedSpeciesTree, "e"))));
-    free(newick);
-    stTree_destruct(linkedSpeciesTree);
-    stHash_destruct(speciesToNumGenes);
-    stHash_destruct(leafToSpecies);
-    stPhylogenyInfo_destructOnTree(polytomy);
-    stTree_destruct(polytomy);
-    stTree_destruct(speciesTree);
-}
-
-static void testStPhylogeny_reconciliationCostAtMostBinary_polytomies(CuTest *testCase) {
-    stTree *speciesTree = stTree_parseNewickString("(((a1,(a2.1,a2.2)a2)a,b)e,((c1, c2)c,(d1, d2)d)f)g;");
-    stTree *polytomy = stTree_parseNewickString("(a-1,a-2,a-3,a-4,b-1,b-2,c-1,e-1)G;");
-    stHash *leafToSpecies = buildLeafToSpeciesUsingDashSeparator(polytomy, speciesTree);
-    stPhylogeny_reconcileAtMostBinary(polytomy, leafToSpecies, false);
-    int64_t dups = 0, losses = 0;
-    stPhylogeny_reconciliationCostAtMostBinary(polytomy, &dups, &losses);
-    CuAssertIntEquals(testCase, 1, losses);
-    CuAssertIntEquals(testCase, 4, dups);
-
-    stHash_destruct(leafToSpecies);
-    stPhylogenyInfo_destructOnTree(polytomy);
-    stTree_destruct(polytomy);
-    stTree_destruct(speciesTree);
-}
-
-static void testStPhylogeny_applyJukesCantorCorrection(CuTest *testCase) {
-    double distanceArray[6][6] = {
-        { 0.0,    0.225,  0.22,   0.745,   0.76,  0.0 },
-        { 0.225,  0.0,    0.05,   0.22,   0.045,  0.225 },
-        { 0.22,   0.05,   0.0,    0.215,  0.015,  0.22 },
-        { 0.745,   0.22,   0.215,  0.0,    0.21,   0.06 },
-        { 0.76,  0.045,  0.015,  0.21,   0.0,    0.215 },
-        { 0.0,    0.225,  0.22,   0.06,   0.215,  0.0 },
-    };
-    stMatrix *distanceMatrix = stMatrix_construct(6, 6);
-    for (int64_t i = 0; i < 6; i++) {
-        for (int64_t j = 0; j < 6; j++) {
-            *stMatrix_getCell(distanceMatrix, i, j) = distanceArray[i][j];
-        }
-    }
-
-    stPhylogeny_applyJukesCantorCorrection(distanceMatrix);
-    CuAssertDblEquals(testCase, 3.7579, *stMatrix_getCell(distanceMatrix, 3, 0), 0.001);
-    CuAssertDblEquals(testCase, 0.0625, *stMatrix_getCell(distanceMatrix, 3, 5), 0.001);
-    // Check that values over 0.75 don't return NaN or infinity.
-    CuAssertTrue(testCase, isnormal(*stMatrix_getCell(distanceMatrix, 4, 0)));
-
-    stMatrix_destruct(distanceMatrix);
-}
-
-// Large tree that takes forever if the reconciliation algorithm isn't
-// linear time. This is sort of a hacky way to test that the
-// reconciliation algorithm stays linear. The test won't fail if it is
-// O(n^2) or exponential, but it will take 30+ mins.
-static void testStPhylogeny_reconcileLargeTree_shouldBeFast(CuTest *testCase) {
-    stTree *geneTree = stTree_parseNewickString("(((0:0.0338606,(24:0,(((((25:0,28:0.00688078):0,26:0):0,27:0):0,29:0):0.0103492,48:0.0131733):0):0.00135617):0,(49:0.00344003,51:0.0607045):0):0.0036751,((((((((((((((((((((((1:0,((15:0,(((((((((((((((((30:0,31:0):0,32:0):0,33:0):0,34:0):0,35:0):0,36:0):0,37:0):0,38:0):0,39:0):0,40:0):0,41:0):0,42:0):0,43:0):0,44:0):0,46:0):0,47:0):0.00485278,45:0.00495128):0.0185071):0.00778827,16:0):0):0,2:0):0,3:0):0,4:0):0,5:0):0,6:0):0,7:0):0,8:0):0,9:0):0,10:0):0,11:0):0,12:0):0,13:0):0,14:0):0,17:0):0,18:0):0,19:0):0,20:0):0,21:0):0,22:0):0,23:0):0.00330033,50:0):0.0036751);");
-    stPhylogeny_addStIndexedTreeInfo(geneTree);
-    int64_t numSpecies = 0;
-    stTree *speciesTree = getRandomBinaryTree(st_randomInt64(2, 7), &numSpecies);
-    stPhylogeny_addStIndexedTreeInfo(speciesTree);
-    // Assign genes to random species.
-    stHash *leafToSpecies = stHash_construct();
-    for(int64_t i = 0; i < 52; i++) {
-        stTree *gene = stPhylogeny_getLeafByIndex(geneTree, i);
-        stTree *species = stPhylogeny_getLeafByIndex(speciesTree, st_randomInt64(0, numSpecies));
-        stHash_insert(leafToSpecies, gene, species);
-    }
-
-    stPhylogeny_reconcileAtMostBinary(geneTree, leafToSpecies, false);
-    stPhylogenyInfo_destructOnTree(geneTree);
-    stTree_destruct(geneTree);
-    stPhylogenyInfo_destructOnTree(speciesTree);
-    stTree_destruct(speciesTree);
-    stHash_destruct(leafToSpecies);
-}
-
 CuSuite* sonLib_stPhylogenyTestSuite(void) {
     CuSuite* suite = CuSuiteNew();
-    SUITE_ADD_TEST(suite, testStPhylogeny_reconciliationCostAtMostBinary_polytomies);
-    SUITE_ADD_TEST(suite, testStPhylogeny_getLinkedSpeciesTree);
-    SUITE_ADD_TEST(suite, testStPhylogeny_greedySplitDecomposition);
-    SUITE_ADD_TEST(suite, testStPhylogeny_getSplits);
-    SUITE_ADD_TEST(suite, testStPhylogeny_nni);
     SUITE_ADD_TEST(suite, testJoinCosts_random);
     SUITE_ADD_TEST(suite, testStPhylogeny_reconcileAtMostBinary_degree2Nodes);
     SUITE_ADD_TEST(suite, testSimpleNeighborJoin);
@@ -1466,26 +1222,5 @@ CuSuite* sonLib_stPhylogenyTestSuite(void) {
     SUITE_ADD_TEST(suite, testStPhylogeny_rootByReconciliationAtMostBinary_simpleTests);
     SUITE_ADD_TEST(suite, testStPhylogeny_rootByReconciliationAtMostBinary_random);
     SUITE_ADD_TEST(suite, testStPhylogeny_reconcileNonBinary);
-    SUITE_ADD_TEST(suite, testStPhylogeny_applyJukesCantorCorrection);
-    SUITE_ADD_TEST(suite, testStPhylogeny_reconcileLargeTree_shouldBeFast);
-
-    (void) testStPhylogeny_reconciliationCostAtMostBinary_polytomies;
-    (void) testStPhylogeny_getLinkedSpeciesTree;
-    (void) testStPhylogeny_greedySplitDecomposition;
-    (void) testStPhylogeny_getSplits;
-    (void) testStPhylogeny_nni;
-    (void) testJoinCosts_random;
-    (void) testStPhylogeny_reconcileAtMostBinary_degree2Nodes;
-    (void) testSimpleNeighborJoin;
-    (void) testSimpleBootstrapPartitionScoring;
-    (void) testSimpleBootstrapReconciliationScoring;
-    (void) testRandomNeighborJoin;
-    (void) testRandomBootstraps;
-    (void) testSimpleJoinCosts;
-    (void) testGuidedNeighborJoiningReducesToNeighborJoining;
-    (void) testGuidedNeighborJoiningLowersReconCost;
-    (void) testStPhylogeny_rootByReconciliationAtMostBinary_simpleTests;
-    (void) testStPhylogeny_rootByReconciliationAtMostBinary_random;
-    (void) testStPhylogeny_reconcileNonBinary;
     return suite;
 }

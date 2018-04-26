@@ -11,7 +11,6 @@
  *      Author: benedictpaten
  */
 #include "sonLibGlobalsTest.h"
-#include "bioioC.h"
 
 static void test_st_logging(CuTest *testCase) {
     /*
@@ -42,34 +41,14 @@ static void test_st_system(CuTest *testCase) {
     /*
      * Tries running two commands, one which should pass, one which should fail.
      */
-    CuAssertTrue(testCase, !st_system("echo 1 > /dev/null 2>&1"));
-    CuAssertTrue(testCase, st_system("thisProgramDoesNotExist > /dev/null 2>&1"));
-}
-
-static void test_fastaDecodeHeader(CuTest *testCase) {
-    stList *tokens = fastaDecodeHeader("a|b|c");
-    CuAssertIntEquals(testCase, 3, stList_length(tokens));
-    CuAssertTrue(testCase, !strcmp(stList_get(tokens, 0), "a"));
-    CuAssertTrue(testCase, !strcmp(stList_get(tokens, 1), "b"));
-    CuAssertTrue(testCase, !strcmp(stList_get(tokens, 2), "c"));
-    stList_destruct(tokens);
-
-    tokens = fastaDecodeHeader("|a||b|");
-    CuAssertIntEquals(testCase, 5, stList_length(tokens));
-    CuAssertTrue(testCase, !strcmp(stList_get(tokens, 0), ""));
-    CuAssertTrue(testCase, !strcmp(stList_get(tokens, 1), "a"));
-    CuAssertTrue(testCase, !strcmp(stList_get(tokens, 2), ""));
-    CuAssertTrue(testCase, !strcmp(stList_get(tokens, 3), "b"));
-    CuAssertTrue(testCase, !strcmp(stList_get(tokens, 4), ""));
-    stList_destruct(tokens);
-
+    CuAssertTrue(testCase, !st_system("echo 1 2>&1 > /dev/null"));
+    CuAssertTrue(testCase, st_system("thisProgramDoesNotExist  2>&1 > /dev/null"));
 }
 
 CuSuite* sonLib_stCommonTestSuite(void) {
     CuSuite* suite = CuSuiteNew();
     SUITE_ADD_TEST(suite, test_st_logging);
     SUITE_ADD_TEST(suite, test_st_system);
-    SUITE_ADD_TEST(suite, test_fastaDecodeHeader);
     return suite;
 }
 

@@ -56,13 +56,6 @@ typedef struct {
                                  // Can be NULL.
 } stPhylogenyInfo;
 
-// Represents a d-split as characterized by Bandelt and Dress, 1992.
-typedef struct {
-    stList *leftSplit;
-    stList *rightSplit;
-    double isolationIndex;
-} stSplit;
-
 // Free a stPhylogenyInfo struct.
 void stPhylogenyInfo_destruct(stPhylogenyInfo *info);
 
@@ -151,14 +144,13 @@ stMatrix *stPhylogeny_computeJoinCosts(stTree *speciesTree,
 // Precompute an MRCA matrix to pass to guided neighbor-joining.
 int64_t **stPhylogeny_getMRCAMatrix(stTree *speciesTree, stHash *speciesToIndex);
 
-// Neighbor joining guided by a species tree. The similarity matrix
-// has entries for each i and j such that s_ij if i > j is #
-// differences between i and j, i < j is # similarities between i and
-// j. Join costs should be precomputed by
+// Neighbor joining guided by a species tree. Note that the matrix is
+// a similarity matrix (i > j is # differences between i and j, i < j
+// is # similarities between i and j) rather than a distance
+// matrix. Join costs should be precomputed by
 // stPhylogeny_computeJoinCosts. indexToSpecies is a map from matrix
 // index (of the similarity matrix) to species leaves.
-stTree *stPhylogeny_guidedNeighborJoining(stMatrix *distanceMatrix,
-                                          stMatrix *similarityMatrix,
+stTree *stPhylogeny_guidedNeighborJoining(stMatrix *similarityMatrix,
                                           stMatrix *joinCosts,
                                           stHash *matrixIndexToJoinCostIndex,
                                           stHash *speciesToJoinCostIndex,
@@ -170,57 +162,32 @@ stTree *stPhylogeny_guidedNeighborJoining(stMatrix *distanceMatrix,
 // on all nodes, and optionally set the labels of the ancestors to the
 // labels of their reconciliation in the species tree.
 //
-// The species tree must be "at-most-binary", i.e. it must have no
-// nodes with more than 3 children, but may have nodes with only one
-// child.
+// The gene tree must be binary, and the species tree must be
+// "at-most-binary", i.e. it must have no nodes with more than 3
+// children, but may have nodes with only one child.
 void stPhylogeny_reconcileAtMostBinary(stTree *geneTree, stHash *leafToSpecies,
                                        bool relabelAncestors);
 
 // For a tree that has already been reconciled by
 // reconcileAtMostBinary, calculates the number of dups and losses
 // implied by the reconciliation. dups and losses must be set to 0
-// before calling. The gene-tree may have polytomies.
+// before calling.
 void stPhylogeny_reconciliationCostAtMostBinary(stTree *reconciledTree,
                                                 int64_t *dups,
                                                 int64_t *losses);
 
 // Return a copy of geneTree that is rooted to minimize duplications.
-// The gene tree must not have any polytomies.
 // NOTE: the returned tree does *not* have reconciliation info set,
 // and this function will reconcile geneTree, resetting any
 // reconciliation information that potentially already exists.
 stTree *stPhylogeny_rootByReconciliationAtMostBinary(stTree *geneTree,
                                                      stHash *leafToSpecies);
 
-// Return a copy of geneTree that is rooted to minimize duplications.
-// This function is slower than rootByReconciliationAtMostBinary, but
-// supports gene trees with polytomies.
-stTree *stPhylogeny_rootByReconciliationNaive(stTree *geneTree, stHash *leafToSpecies);
-
 // Reconcile a binary gene tree to a species tree that may include
 // polytomies. Based on the method used by NOTUNG, described in
 // Vernot, Stolzer, Goldman, Durand, J Comput Biol 2008.
 void stPhylogeny_reconcileNonBinary(stTree *geneTree, stHash *leafToSpecies,
                                     bool relabelAncestors);
-
-// Nearest-neighbor interchange (for strictly binary trees). Returns
-// two new neighboring trees in the parameters tree1 and tree2. Does
-// not modify the original tree.
-void stPhylogeny_nni(stTree *anc, stTree **tree1, stTree **tree2);
-
-// Get the non-trivial d-splits as described in Bandelt and Dress,
-// 1992. The "relaxed" parameter, if true, uses the condition stated
-// in the paper (where the intra-split distance must not be larger
-// than *both* inter-split distances), but if false, uses a stricter
-// condition (that the intra-split distance must be smaller than
-// *both* inter-split distances).
-stList *stPhylogeny_getSplits(stMatrix *distanceMatrix, bool relaxed);
-
-// Build a tree greedily using the d-splits from stPhylogeny_getSplits.
-stTree *stPhylogeny_greedySplitDecomposition(stMatrix *distanceMatrix, bool relaxed);
-
-// Apply the Jukes-Cantor distance correction to the input distance matrix.
-void stPhylogeny_applyJukesCantorCorrection(stMatrix *distanceMatrix);
 
 #ifdef __cplusplus
 }

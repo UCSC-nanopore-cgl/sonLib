@@ -22,6 +22,13 @@
 extern "C" {
 #endif
 
+
+/*
+ * Concats two strings together. Must free string after use
+ */
+char *stString_concat(const char *s1, const char *s2);
+
+
 /*
  * Copies a string, if string is NULL, NULL is returned
  */
@@ -120,6 +127,13 @@ char *stString_reverseComplementString(const char *string);
  * As stString_reverseComplementString, but for a single character.
  */
 char stString_reverseComplementChar(char c);
+
+/*
+ * Gives the complement of string of this string. Assumes string is DNA,
+ * uses iupac ambiguity characters. Preserves case. For non iupac characters the original
+ * character is returned.
+ */
+char *stString_ComplementString(const char *string);
 
 #ifdef __cplusplus
 }
