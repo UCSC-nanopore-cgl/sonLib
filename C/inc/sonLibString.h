@@ -29,6 +29,7 @@ extern "C" {
 char *stString_concat(const char *s1, const char *s2);
 
 
+
 /*
  * Copies a string, if string is NULL, NULL is returned
  */
