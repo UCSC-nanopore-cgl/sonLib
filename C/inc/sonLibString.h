@@ -136,6 +136,11 @@ char stString_reverseComplementChar(char c);
  */
 char *stString_ComplementString(const char *string);
 
+
+// reverse string if strrev is not available
+char *stString_ReverseString(const char *string);
+
+
 #ifdef __cplusplus
 }
 #endif

@@ -283,3 +283,17 @@ char *stString_ComplementString(const char *string) {
     cA[j] = '\0';
     return cA;
 }
+
+char * stString_ReverseString(const char* string){
+    int64_t i, j;
+    j = strlen(string);
+    char *cA;
+
+    cA = st_malloc(sizeof(char) * (j + 1));
+    for (i = 0; i < j; i++) {
+        cA[i] = string[j - 1 - i];
+    }
+    cA[j] = '\0';
+    return cA;
+}
+
