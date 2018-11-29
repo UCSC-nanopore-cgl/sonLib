@@ -12,7 +12,7 @@ ifeq (${SYS},FreeBSD)
 else ifeq ($(SYS),Darwin) #This is to deal with the Mavericks replacing gcc with clang fully
 #	cxx = clang -std=c99 
 	cxx = gcc-5
-	cpp = clang++ 
+	cpp = g++
 else
     cxx = gcc -std=c99
     cpp = g++ 
