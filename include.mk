@@ -7,15 +7,15 @@ SYS =  $(shell uname -s)
 ifeq (${SYS},FreeBSD)
     # default FreeBSD gcc (4.2.1) has warning bug
     #cxx = gcc46 -std=c99 -Wno-unused-but-set-variable
-    cxx = gcc34 -std=c99 -Wno-unused-but-set-variable
-    cpp = g++
+    cxx = gcc34 -std=c99 -Wno-unused-but-set-variable -fPIC
+    cpp = g++ -fPIC
 else ifeq ($(SYS),Darwin) #This is to deal with the Mavericks replacing gcc with clang fully
 #	cxx = clang -std=c99 
-    cxx = gcc-5
-    cpp = g++
+    cxx = gcc-5 -fPIC
+    cpp = g++ -fPIC
 else
-    cxx = gcc -std=c99
-    cpp = g++ 
+    cxx = gcc -std=c99 -fPIC
+    cpp = g++ -fPIC
 endif
 
 # -Wno-unused-result
