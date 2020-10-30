@@ -12,7 +12,6 @@ script:
   - make && PATH=$PATH:`pwd`/bin make test
 os:
   - linux
-  - osx
 env:
   - CGL_DEBUG=1
   - CGL_DEBUG=ultra
