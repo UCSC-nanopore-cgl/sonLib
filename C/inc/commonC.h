@@ -19,7 +19,7 @@ extern "C" {
 //utils functions
 
 //logging and debugging
-#define DEBUG TRUE
+//#define DEBUG TRUE
 
 void exitOnFailure(int64_t exitValue, const char *failureMessage, ...);
 
